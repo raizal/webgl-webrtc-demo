@@ -14,13 +14,17 @@ const vertexShaderSource = `
   }
 `;
 
-// Fragment shader for video rendering with watermark
+// Fragment shader for video rendering with watermark and timestamp
 const fragmentShaderSource = `
   precision highp float;
   uniform sampler2D u_texture;
   uniform sampler2D u_watermarkTexture;
+  uniform sampler2D u_timestampTexture;
   uniform vec2 u_watermarkSize;
+  uniform vec2 u_timestampPosition;
+  uniform vec2 u_timestampSize;
   uniform bool u_hasWatermark;
+  uniform bool u_hasTimestamp;
   varying vec2 v_texCoord;
 
   // Render the watermark in the top-right corner
@@ -44,22 +48,52 @@ const fragmentShaderSource = `
       (coord.y - topRight.y) / u_watermarkSize.y
     );
     
-    // Use the Y coordinate directly without flipping
-    // watermarkCoord.y = 1.0 - watermarkCoord.y;
-    
     // Sample the watermark texture
     return texture2D(u_watermarkTexture, watermarkCoord);
+  }
+  
+  // Render the timestamp in the specified position
+  vec4 renderTimestamp(vec2 coord) {
+    if (!u_hasTimestamp) return vec4(0.0);
+    
+    // Determine if we're in the timestamp region
+    if (coord.x < u_timestampPosition.x || 
+        coord.x > u_timestampPosition.x + u_timestampSize.x || 
+        coord.y < u_timestampPosition.y || 
+        coord.y > u_timestampPosition.y + u_timestampSize.y) {
+      return vec4(0.0);
+    }
+
+    // Calculate texture coordinates within the timestamp
+    vec2 timestampCoord = vec2(
+      (coord.x - u_timestampPosition.x) / u_timestampSize.x,
+      (coord.y - u_timestampPosition.y) / u_timestampSize.y
+    );
+    
+    // Sample the timestamp texture
+    return texture2D(u_timestampTexture, timestampCoord);
   }
   
   void main() {
     vec2 center = vec2(0.5, 0.5);
     vec4 color = texture2D(u_texture, v_texCoord);
+    float distance = length(v_texCoord - center) * 1.5;
+    float vignette = smoothstep(0.8, 0.2, distance);
     
+    color = vec4(color.rgb * vignette, color.a);
+
     // Apply watermark
     vec4 watermark = renderWatermark(v_texCoord);
     if (watermark.a > 0.0) {
       // Blend the watermark with the video
       color = mix(color, watermark, watermark.a * 0.3);
+    }
+    
+    // Apply timestamp
+    vec4 timestamp = renderTimestamp(v_texCoord);
+    if (timestamp.a > 0.0) {
+      // Blend the timestamp with the video
+      color = mix(color, timestamp, timestamp.a * 0.7);
     }
     
     gl_FragColor = vec4(color.rgb, color.a);
@@ -243,6 +277,59 @@ function createImageTexture(gl: WebGLRenderingContext, url: string): Promise<{
   });
 }
 
+/**
+ * Create a canvas with timestamp text
+ * @param time Current time in seconds
+ * @param width Width of the canvas
+ * @param height Height of the canvas
+ * @returns Canvas element with rendered timestamp
+ */
+export function createTextCanvas(time: number, width = 280, height = 80): HTMLCanvasElement {
+  // Create a canvas for rendering the timestamp
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return canvas;
+  }
+  
+  // Clear canvas with transparent background
+  ctx.clearRect(0, 0, width, height);
+  
+  // Format the time as HH:MM:SS
+  const hours = Math.floor(time / 3600);
+  const minutes = Math.floor((time % 3600) / 60);
+  const seconds = Math.floor(time % 60);
+  
+  // Get current date
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  
+  // Format time and add date
+  const formattedTime = 
+    `${year}-${month}-${day} ` +
+    (hours > 0 ? `${hours.toString().padStart(2, '0')}:` : '') + 
+    `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  
+  // Create a semi-transparent background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.roundRect(0, height / 4, width, height / 2, 5);
+  ctx.fill();
+  
+  // Render the timestamp text
+  ctx.font = 'bold 24px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'white';
+  ctx.fillText(formattedTime, width / 2, height / 2);
+  
+  return canvas;
+}
+
 // Interface for WebGL context, program, texture, and uniform locations
 interface WebGLSetup {
   gl: WebGLRenderingContext | null;
@@ -250,13 +337,19 @@ interface WebGLSetup {
   texture: WebGLTexture | null;
   fontTexture: WebGLTexture | null;
   watermarkTexture: WebGLTexture | null;
+  timestampTexture: WebGLTexture | null;
   fpsUniformLocation: WebGLUniformLocation | null;
   fontTextureLocation: WebGLUniformLocation | null;
   watermarkTextureLocation: WebGLUniformLocation | null;
+  timestampTextureLocation: WebGLUniformLocation | null;
   watermarkSizeLocation: WebGLUniformLocation | null;
+  timestampPositionLocation: WebGLUniformLocation | null;
+  timestampSizeLocation: WebGLUniformLocation | null;
   hasWatermarkLocation: WebGLUniformLocation | null;
+  hasTimestampLocation: WebGLUniformLocation | null;
   watermarkSize: { width: number; height: number };
   hasWatermark: boolean;
+  hasTimestamp: boolean;
 }
 
 /**
@@ -273,13 +366,19 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
       texture: null, 
       fontTexture: null,
       watermarkTexture: null,
+      timestampTexture: null,
       fpsUniformLocation: null,
       fontTextureLocation: null,
       watermarkTextureLocation: null,
+      timestampTextureLocation: null,
       watermarkSizeLocation: null,
+      timestampPositionLocation: null,
+      timestampSizeLocation: null,
       hasWatermarkLocation: null,
+      hasTimestampLocation: null,
       watermarkSize: { width: 0, height: 0 },
-      hasWatermark: false
+      hasWatermark: false,
+      hasTimestamp: false
     };
   }
 
@@ -294,13 +393,19 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
       texture: null, 
       fontTexture: null,
       watermarkTexture: null,
+      timestampTexture: null,
       fpsUniformLocation: null,
       fontTextureLocation: null,
       watermarkTextureLocation: null,
+      timestampTextureLocation: null,
       watermarkSizeLocation: null,
+      timestampPositionLocation: null,
+      timestampSizeLocation: null,
       hasWatermarkLocation: null,
+      hasTimestampLocation: null,
       watermarkSize: { width: 0, height: 0 },
-      hasWatermark: false
+      hasWatermark: false,
+      hasTimestamp: false
     };
   }
 
@@ -313,13 +418,19 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
       texture: null, 
       fontTexture: null,
       watermarkTexture: null,
+      timestampTexture: null,
       fpsUniformLocation: null,
       fontTextureLocation: null,
       watermarkTextureLocation: null,
+      timestampTextureLocation: null,
       watermarkSizeLocation: null,
+      timestampPositionLocation: null,
+      timestampSizeLocation: null,
       hasWatermarkLocation: null,
+      hasTimestampLocation: null,
       watermarkSize: { width: 0, height: 0 },
-      hasWatermark: false
+      hasWatermark: false,
+      hasTimestamp: false
     };
   }
 
@@ -336,8 +447,12 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
   const fpsUniformLocation = gl.getUniformLocation(program, 'u_fps');
   const fontTextureLocation = gl.getUniformLocation(program, 'u_fontTexture');
   const watermarkTextureLocation = gl.getUniformLocation(program, 'u_watermarkTexture');
+  const timestampTextureLocation = gl.getUniformLocation(program, 'u_timestampTexture');
   const watermarkSizeLocation = gl.getUniformLocation(program, 'u_watermarkSize');
+  const timestampPositionLocation = gl.getUniformLocation(program, 'u_timestampPosition');
+  const timestampSizeLocation = gl.getUniformLocation(program, 'u_timestampSize');
   const hasWatermarkLocation = gl.getUniformLocation(program, 'u_hasWatermark');
+  const hasTimestampLocation = gl.getUniformLocation(program, 'u_hasTimestamp');
 
   // Set up geometry (2 triangles for a rectangle)
   const positions = [
@@ -433,6 +548,45 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
     }
   }
   
+  // Create timestamp texture
+  const timestampTexture = gl.createTexture();
+  if (timestampTexture && timestampTextureLocation) {
+    // Initialize with an empty canvas
+    const emptyCanvas = document.createElement('canvas');
+    emptyCanvas.width = 200;
+    emptyCanvas.height = 60;
+    
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, timestampTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, emptyCanvas);
+    
+    // Set texture parameters
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    
+    // Set the timestamp texture uniform to use texture unit 3
+    gl.uniform1i(timestampTextureLocation, 3);
+    
+    // Set timestamp position (top-left corner with padding)
+    if (timestampPositionLocation) {
+      gl.uniform2f(timestampPositionLocation, 0.02, 0.02); // 2% padding from edges
+    }
+    
+    // Set timestamp size (normalized coordinates)
+    if (timestampSizeLocation) {
+      const timestampWidth = 200 / canvas.width;
+      const timestampHeight = 60 / canvas.height;
+      gl.uniform2f(timestampSizeLocation, timestampWidth, timestampHeight);
+    }
+    
+    // Initially no timestamp is shown
+    if (hasTimestampLocation) {
+      gl.uniform1i(hasTimestampLocation, 0); // 0 = false
+    }
+  }
+  
   // Initial clear
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -443,13 +597,19 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
     texture, 
     fontTexture,
     watermarkTexture,
+    timestampTexture,
     fpsUniformLocation,
     fontTextureLocation,
     watermarkTextureLocation,
+    timestampTextureLocation,
     watermarkSizeLocation,
+    timestampPositionLocation,
+    timestampSizeLocation,
     hasWatermarkLocation,
+    hasTimestampLocation,
     watermarkSize,
-    hasWatermark
+    hasWatermark,
+    hasTimestamp: !!timestampTexture
   };
 }
 
@@ -461,6 +621,9 @@ export function renderVideoFrame(
   program: WebGLProgram,
   texture: WebGLTexture,
   video: HTMLVideoElement,
+  currentTime?: number,
+  timestampTexture?: WebGLTexture | null,
+  hasTimestampLocation?: WebGLUniformLocation | null
 ): void {
   // Bind the video texture to texture unit 0
   gl.activeTexture(gl.TEXTURE0);
@@ -468,6 +631,18 @@ export function renderVideoFrame(
   
   // Update texture with current video frame
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  
+  // Update timestamp texture if provided
+  if (currentTime !== undefined && timestampTexture && hasTimestampLocation) {
+    const textCanvas = createTextCanvas(currentTime);
+    
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, timestampTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
+    
+    // Enable timestamp rendering
+    gl.uniform1i(hasTimestampLocation, 1); // 1 = true
+  }
   
   // Draw the rectangle
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

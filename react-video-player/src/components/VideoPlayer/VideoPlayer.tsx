@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef, RefObject } from 'react';
 import VideoControls from './VideoControls';
-import VideoOverlay from './VideoOverlay';
 import WebGLRenderer from './WebGLRenderer';
 import useVideoState from '../../hooks/useVideoState';
 import { PlayIcon, CrossCircledIcon } from '@radix-ui/react-icons';
 
 interface VideoPlayerProps {
   src: string;
-  poster?: string;
   watermarkUrl?: string;
   width?: number;
   height?: number;
@@ -15,7 +13,6 @@ interface VideoPlayerProps {
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({
   src,
-  poster,
   watermarkUrl,
   width = 1280,
   height = 720
@@ -116,7 +113,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ref={videoRef}
         src={src}
         className="hidden"
-        poster={poster}
         preload="metadata"
         crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
@@ -134,6 +130,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         width={width}
         height={height}
         watermarkUrl={watermarkUrl}
+        currentTime={currentTime}
       />}
 
       {/* Loading Indicator */}
@@ -177,12 +174,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         )}
       </div>
-
-      {/* Overlays (timestamp) */}
-      <VideoOverlay
-        currentTime={currentTime}
-        isVisible={true}
-      />
 
       {/* Video Controls */}
       <div

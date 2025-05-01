@@ -8,6 +8,7 @@ interface WebGLRendererProps {
   width: number;
   height: number;
   watermarkUrl?: string; // URL for the watermark image
+  currentTime: number; // Current video time in seconds
 }
 
 const WebGLRenderer: React.FC<WebGLRendererProps> = ({
@@ -16,18 +17,24 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
   isPlaying,
   width,
   height,
-  watermarkUrl
+  watermarkUrl,
+  currentTime
 }) => {
   const glRef = useRef<WebGLRenderingContext | null>(null);
   const textureRef = useRef<WebGLTexture | null>(null);
   const fontTextureRef = useRef<WebGLTexture | null>(null);
   const watermarkTextureRef = useRef<WebGLTexture | null>(null);
+  const timestampTextureRef = useRef<WebGLTexture | null>(null);
   const programRef = useRef<WebGLProgram | null>(null);
   const fpsUniformLocationRef = useRef<WebGLUniformLocation | null>(null);
   const fontTextureLocationRef = useRef<WebGLUniformLocation | null>(null);
   const watermarkTextureLocationRef = useRef<WebGLUniformLocation | null>(null);
+  const timestampTextureLocationRef = useRef<WebGLUniformLocation | null>(null);
   const watermarkSizeLocationRef = useRef<WebGLUniformLocation | null>(null);
+  const timestampPositionLocationRef = useRef<WebGLUniformLocation | null>(null);
+  const timestampSizeLocationRef = useRef<WebGLUniformLocation | null>(null);
   const hasWatermarkLocationRef = useRef<WebGLUniformLocation | null>(null);
+  const hasTimestampLocationRef = useRef<WebGLUniformLocation | null>(null);
   const requestRef = useRef<number | null>(null);
   const [fps, setFps] = useState<number>(0);
   const [isWebGLInitialized, setIsWebGLInitialized] = useState<boolean>(false);
@@ -58,11 +65,16 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
       textureRef.current = webglSetup.texture;
       fontTextureRef.current = webglSetup.fontTexture;
       watermarkTextureRef.current = webglSetup.watermarkTexture;
+      timestampTextureRef.current = webglSetup.timestampTexture;
       fpsUniformLocationRef.current = webglSetup.fpsUniformLocation;
       fontTextureLocationRef.current = webglSetup.fontTextureLocation;
       watermarkTextureLocationRef.current = webglSetup.watermarkTextureLocation;
+      timestampTextureLocationRef.current = webglSetup.timestampTextureLocation;
       watermarkSizeLocationRef.current = webglSetup.watermarkSizeLocation;
+      timestampPositionLocationRef.current = webglSetup.timestampPositionLocation;
+      timestampSizeLocationRef.current = webglSetup.timestampSizeLocation;
       hasWatermarkLocationRef.current = webglSetup.hasWatermarkLocation;
+      hasTimestampLocationRef.current = webglSetup.hasTimestampLocation;
       
       setIsWebGLInitialized(true);
     };
@@ -87,6 +99,10 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
         
         if (watermarkTextureRef.current) {
           glRef.current.deleteTexture(watermarkTextureRef.current);
+        }
+        
+        if (timestampTextureRef.current) {
+          glRef.current.deleteTexture(timestampTextureRef.current);
         }
       }
       
@@ -131,6 +147,9 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
             programRef.current,
             textureRef.current,
             videoRef.current,
+            currentTime,
+            timestampTextureRef.current,
+            hasTimestampLocationRef.current
           );
           // Count frame for FPS calculation
           frameCountRef.current++;
@@ -144,12 +163,15 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
     if (isPlaying) {
       render();
     } else if (glRef.current && programRef.current && textureRef.current && videoRef.current) {
-      // When paused, still render the current frame with FPS
+      // When paused, still render the current frame with timestamp
       renderVideoFrame(
         glRef.current,
         programRef.current,
         textureRef.current,
         videoRef.current,
+        currentTime,
+        timestampTextureRef.current,
+        hasTimestampLocationRef.current
       );
     }
     
@@ -158,7 +180,7 @@ const WebGLRenderer: React.FC<WebGLRendererProps> = ({
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [isPlaying, fps, isWebGLInitialized]);
+  }, [isPlaying, fps, isWebGLInitialized, currentTime]);
 
   return (
     <canvas

@@ -9,8 +9,7 @@ function App() {
           WebGL Video Player
         </h1>
         <VideoPlayer 
-          src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-          poster="https://images.pexels.com/photos/5387784/pexels-photo-5387784.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+          src="http://localhost:3000/video/sample.mp4"
           watermarkUrl="https://raw.githubusercontent.com/remojansen/logo.ts/051b964f2034d243f6e57024350b7e06f5e151ea/ts.png"
         />
       </div>

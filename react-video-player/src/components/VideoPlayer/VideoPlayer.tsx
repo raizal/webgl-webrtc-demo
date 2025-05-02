@@ -40,7 +40,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     handleVolumeChange,
     handleSeek,
     toggleFullscreen,
-    resetVideo
+    resetVideo: _
   } = useVideoState(videoRef, containerRef);
 
   // Handle hover state for controls

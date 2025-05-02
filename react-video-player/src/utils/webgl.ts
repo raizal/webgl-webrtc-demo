@@ -618,7 +618,7 @@ export async function setupWebGL(canvas: HTMLCanvasElement, watermarkUrl?: strin
  */
 export function renderVideoFrame(
   gl: WebGLRenderingContext,
-  program: WebGLProgram,
+  _: WebGLProgram,
   texture: WebGLTexture,
   video: HTMLVideoElement,
   currentTime?: number,

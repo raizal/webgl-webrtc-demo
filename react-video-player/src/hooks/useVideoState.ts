@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, RefObject } from 'react';
+import { useState, useEffect, RefObject } from 'react';
 
 const useVideoState = (
   videoRef: RefObject<HTMLVideoElement | null>,

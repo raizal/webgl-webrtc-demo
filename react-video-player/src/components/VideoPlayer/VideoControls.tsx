@@ -18,7 +18,6 @@ interface VideoControlsProps {
 }
 
 const VideoControls: React.FC<VideoControlsProps> = ({
-  videoRef,
   isPlaying,
   isMuted,
   currentTime,

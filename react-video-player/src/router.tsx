@@ -8,7 +8,7 @@ const router = createBrowserRouter([
     element: <App />
   },
   {
-    path: '/webrtc',
+    path: '/video-conference',
     element: <WebRTC />
   }
 ]);

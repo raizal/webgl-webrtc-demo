@@ -9,13 +9,13 @@ const Main = () => {
           WebGL Video Player
         </h1>
         <VideoPlayer 
-          src="http://localhost:3000/video/sample.mp4"
+          src={import.meta.env.VITE_DEMO_STREAM || "http://localhost:3000/video/sample.mp4"}
           watermarkUrl="https://raw.githubusercontent.com/remojansen/logo.ts/051b964f2034d243f6e57024350b7e06f5e151ea/ts.png"
         />
         
         <div className="mt-6 flex justify-center">
           <Link 
-            to="/webrtc" 
+            to="/video-conference" 
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
           >
             Go to WebRTC Page

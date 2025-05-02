@@ -94,7 +94,7 @@ const WebRTC: React.FC = () => {
 
   // Initialize socket connection
   useEffect(() => {
-    const newSocket = io('http://localhost:3000');
+    const newSocket = io(import.meta.env.VITE_PUBLIC_URL || 'http://localhost:3000');
     
     newSocket.on('connect', () => {
       console.log('Connected to socket server');

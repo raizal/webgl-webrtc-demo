@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
+import { SpeakerOffIcon, SpeakerLoudIcon, ArrowLeftIcon } from '@radix-ui/react-icons';
 
 // Extended HTMLVideoElement interface to include captureStream
 interface HTMLVideoElementWithCapture extends HTMLVideoElement {
@@ -75,7 +76,7 @@ const WebRTC: React.FC = () => {
   const [username, setUsername] = useState<string>('');
   const [isInRoom, setIsInRoom] = useState<boolean>(false);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(true);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [roomClients, setRoomClients] = useState<User[]>([]);
   const [streamType, setStreamType] = useState<'camera' | 'video' | 'file'>('camera');
@@ -313,13 +314,28 @@ const WebRTC: React.FC = () => {
   // Create a peer connection
   const createPeerConnection = (peerId: string, peerUsername: string, peerStreamActive: boolean) => {
     try {
-      const peerConnection = new RTCPeerConnection(ICE_SERVERS);
+      // Set up peer connection with specific options
+      const peerConnection = new RTCPeerConnection({
+        ...ICE_SERVERS,
+        // These options can help with audio connectivity
+        iceTransportPolicy: 'all',
+        rtcpMuxPolicy: 'require',
+        bundlePolicy: 'max-bundle'
+      });
       
-      // Add local stream tracks to the connection
+      // Add local stream tracks to the connection if available
       if (localStreamRef.current) {
+        console.log(`Adding ${localStreamRef.current.getTracks().length} tracks to peer connection with ${peerId}`);
+        
+        // Log track details before adding
         localStreamRef.current.getTracks().forEach((track: MediaStreamTrack) => {
+          console.log(`Adding track to ${peerId}: ${track.kind}, ${track.label}, enabled: ${track.enabled}`);
+          // Make sure all tracks are enabled
+          track.enabled = true;
           peerConnection.addTrack(track, localStreamRef.current!);
         });
+      } else {
+        console.warn(`No local stream available when creating peer connection with ${peerId}`);
       }
       
       // Handle ICE candidate
@@ -333,12 +349,35 @@ const WebRTC: React.FC = () => {
         }
       };
       
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log(`ICE connection state with ${peerId}: ${peerConnection.iceConnectionState}`);
+      };
+      
       // Handle incoming tracks
       peerConnection.ontrack = (event) => {
-        console.log(`Received track from ${peerId}`);
+        console.log(`Received track from ${peerId}, kind: ${event.track.kind}, enabled: ${event.track.enabled}`);
         const videoElement = videoRefs.current.get(peerId);
         if (videoElement) {
-          videoElement.srcObject = event.streams[0];
+          // Ensure we're not muting the remote stream
+          videoElement.muted = false;
+          videoElement.volume = 1.0;
+          
+          // Log incoming audio tracks
+          const stream = event.streams[0];
+          console.log(`Remote stream has ${stream.getAudioTracks().length} audio tracks`);
+          stream.getAudioTracks().forEach(track => {
+            console.log(`Remote audio track: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}`);
+            // Ensure audio tracks are enabled
+            track.enabled = true;
+          });
+          
+          videoElement.srcObject = stream;
+          
+          // Try to play - might need user interaction
+          videoElement.play().catch(err => {
+            console.warn('Could not autoplay remote video, may need user interaction', err);
+          });
         }
       };
       
@@ -474,23 +513,37 @@ const WebRTC: React.FC = () => {
   const startLocalStream = async () => {
     try {
       if (streamType === 'camera') {
-        // Request access to camera and microphone
+        // Request access to camera and microphone with specific constraints
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
         });
         
-        // Mute audio based on state
-        stream.getAudioTracks().forEach((track: MediaStreamTrack) => {
-          track.enabled = !isMuted;
-        });
+        // Check if audio track was obtained
+        const audioTracks = stream.getAudioTracks();
+        console.log(`Camera stream has ${audioTracks.length} audio tracks`);
+        
+        if (audioTracks.length === 0) {
+          console.warn('No audio track in camera stream - might be a permissions issue');
+          showNotification('Audio track not available, check microphone permissions', 'warning');
+        } else {
+          audioTracks.forEach(track => {
+            console.log(`Audio track from camera: ${track.label}, enabled: ${track.enabled}`);
+            track.enabled = true; // Always enable for remote clients
+          });
+        }
         
         // Store the stream
         localStreamRef.current = stream;
         
-        // Display stream in the video element
+        // Display stream in the video element - always muted locally
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+          localVideoRef.current.muted = true; // Always mute local preview to prevent echo
         }
       } else if (streamType === 'video') {
         // Use video element as source
@@ -530,108 +583,204 @@ const WebRTC: React.FC = () => {
           localStreamRef.current = stream;
         }
       } else if (streamType === 'file' && localFile) {
+        console.log('Starting file stream with file:', localFile.name);
+        
         // Create hidden video element for the file if it doesn't exist
         if (!fileVideoRef.current) {
           const videoElement = document.createElement('video') as HTMLVideoElementWithCapture;
           videoElement.style.display = 'none';
+          videoElement.setAttribute('crossorigin', 'anonymous');
           document.body.appendChild(videoElement);
           fileVideoRef.current = videoElement;
         }
         
         // Create object URL for the file
         const objectUrl = URL.createObjectURL(localFile);
+        console.log('Created object URL for file:', objectUrl);
         
-        // Set source and play the video
+        // Set source on the hidden video element
         fileVideoRef.current.src = objectUrl;
-        fileVideoRef.current.muted = false; // Changed: Don't mute the source video
-        fileVideoRef.current.volume = 1.0; // Ensure volume is up
-        fileVideoRef.current.controls = false; // No need for controls on hidden element
+        fileVideoRef.current.muted = false; // Don't mute the source - needed for proper capture
+        fileVideoRef.current.volume = 1.0;
+        fileVideoRef.current.controls = false;
+        fileVideoRef.current.loop = true; // Loop the video
         
-        // Make sure we handle the loadedmetadata event
+        console.log('Waiting for video metadata to load...');
+        
+        // Wait for metadata to load
         await new Promise<void>((resolve) => {
           if (fileVideoRef.current) {
-            if (fileVideoRef.current.readyState >= 2) {
+            fileVideoRef.current.onloadedmetadata = () => {
+              console.log('Video metadata loaded, duration:', fileVideoRef.current?.duration);
               resolve();
-            } else {
-              fileVideoRef.current.onloadedmetadata = () => resolve();
+            };
+            
+            if (fileVideoRef.current.readyState >= 2) {
+              console.log('Video already has metadata, duration:', fileVideoRef.current.duration);
+              resolve();
             }
           }
         });
         
-        // Enable audio by requesting user interaction first if needed
+        console.log('Attempting to play video file...');
+        
+        // Try to play the video - might need user interaction
         try {
           await fileVideoRef.current.play();
+          console.log('Video playback started successfully');
         } catch (err) {
-          console.log('Browser requires user interaction before audio playback', err);
-          showNotification('Click anywhere on the page to enable audio', 'warning');
+          console.warn('Autoplay prevented. Waiting for user interaction:', err);
+          showNotification('Click anywhere to enable audio from file', 'warning');
           
-          // Add one-time listener for user interaction
-          const enableAudio = async () => {
-            try {
-              await fileVideoRef.current?.play();
-              document.removeEventListener('click', enableAudio);
-              document.removeEventListener('touchstart', enableAudio);
-            } catch (err) {
-              console.error('Still could not play audio after user interaction', err);
-            }
-          };
-          
-          document.addEventListener('click', enableAudio, { once: true });
-          document.addEventListener('touchstart', enableAudio, { once: true });
+          // Wait for user interaction
+          await new Promise<void>(resolve => {
+            const enableAudio = async () => {
+              try {
+                await fileVideoRef.current?.play();
+                console.log('Video playback started after user interaction');
+                document.removeEventListener('click', enableAudio);
+                document.removeEventListener('touchstart', enableAudio);
+                resolve();
+              } catch (err) {
+                console.error('Still could not play video after user interaction:', err);
+              }
+            };
+            
+            document.addEventListener('click', enableAudio, { once: true });
+            document.addEventListener('touchstart', enableAudio, { once: true });
+          });
         }
         
-        // Debug logs for audio tracks
-        console.log('File type:', localFile.type);
+        // Give a short time for playback to actually start
+        await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Explicitly wait a small amount of time for the video to start playing
-        // This helps ensure audio tracks are available
-        await new Promise(resolve => setTimeout(resolve, 300));
+        console.log('Attempting to capture stream from video...');
         
-        // Capture the stream based on browser support
+        // Capture the stream with both video and audio
         let stream: MediaStream;
-        if (typeof fileVideoRef.current.captureStream === 'function') {
-          stream = fileVideoRef.current.captureStream();
-        } else if (typeof fileVideoRef.current.mozCaptureStream === 'function') {
-          stream = fileVideoRef.current.mozCaptureStream();
-        } else {
-          throw new Error('Video capture is not supported in this browser');
+        try {
+          // Try different captureStream methods depending on browser
+          if (typeof fileVideoRef.current.captureStream === 'function') {
+            stream = fileVideoRef.current.captureStream();
+            console.log('Used standard captureStream');
+          } else if (typeof fileVideoRef.current.mozCaptureStream === 'function') {
+            stream = fileVideoRef.current.mozCaptureStream();
+            console.log('Used Firefox mozCaptureStream');
+          } else {
+            throw new Error('Video capture is not supported in this browser');
+          }
+          
+          // Check if we got audio tracks
+          const videoTracks = stream.getVideoTracks();
+          const audioTracks = stream.getAudioTracks();
+          
+          console.log(`Captured stream has ${videoTracks.length} video tracks and ${audioTracks.length} audio tracks`);
+          
+          // Make sure video tracks are enabled
+          videoTracks.forEach(track => {
+            console.log(`Video track: ${track.label}, initially enabled: ${track.enabled}`);
+            track.enabled = true;
+            console.log(`Video track enabled status now: ${track.enabled}`);
+          });
+          
+          if (videoTracks.length === 0) {
+            console.warn('No video tracks captured from file - trying to fix');
+            showNotification('Video capture issue - try a different file format', 'warning');
+          }
+          
+          if (audioTracks.length === 0) {
+            console.warn('No audio tracks in the captured stream - attempting alternative capture');
+            
+            // If no audio tracks, try a different approach with AudioContext
+            // This helps in some browsers that don't properly capture audio with captureStream
+            try {
+              const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+              const source = audioContext.createMediaElementSource(fileVideoRef.current);
+              const destination = audioContext.createMediaStreamDestination();
+              source.connect(destination);
+              
+              // Also connect to audio output so we can monitor locally if needed
+              // source.connect(audioContext.destination);
+              
+              // Add audio tracks from audio context
+              const audioStream = destination.stream;
+              console.log(`AudioContext stream has ${audioStream.getAudioTracks().length} tracks`);
+              
+              // Add audio tracks to the main stream
+              audioStream.getAudioTracks().forEach(track => {
+                console.log('Adding audio track from AudioContext:', track.label);
+                stream.addTrack(track);
+              });
+              
+              // Recheck audio tracks
+              console.log(`After AudioContext, stream has ${stream.getAudioTracks().length} audio tracks`);
+            } catch (audioErr) {
+              console.error('Failed to create audio context fallback:', audioErr);
+            }
+          }
+          
+          // Log details about tracks we captured
+          stream.getTracks().forEach(track => {
+            console.log(`Track in captured stream: ${track.kind}, ${track.label}, enabled: ${track.enabled}`);
+            // Make sure all tracks are enabled
+            track.enabled = true;
+          });
+        } catch (captureErr) {
+          console.error('Failed to capture stream from video:', captureErr);
+          showNotification('Failed to capture stream from video file', 'error');
+          throw captureErr;
         }
         
-        // Log audio tracks for debugging
-        console.log('Stream audio tracks:', stream.getAudioTracks().length);
-        
-        // If no audio tracks found, try setting a higher volume
-        if (stream.getAudioTracks().length === 0) {
-          console.warn('No audio tracks detected in the file stream');
-          showNotification('This file may not have audio or your browser blocked it', 'warning');
-        }
-        
-        // Copy to visible video element
+        // Apply the stream to the visible video element (always muted locally)
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          localVideoRef.current.muted = true; // Mute the local preview to avoid echo
+          localVideoRef.current.muted = true; // Mute local preview
+          console.log('Applied stream to local video preview (muted)');
         }
         
-        // Handle audio based on mute state in a way that preserves existing tracks
-        const audioTracks = stream.getAudioTracks();
-        audioTracks.forEach((track: MediaStreamTrack) => {
-          track.enabled = !isMuted; // Set according to mute state
-        });
-        
-        // Store the stream
+        // Store the stream for later use with peer connections
         localStreamRef.current = stream;
       }
       
       // Add local stream to all existing peer connections
       if (localStreamRef.current) {
-        peers.forEach(peer => {
-          // Log how many tracks we're sending for debugging
-          console.log('Sending tracks to peer:', localStreamRef.current!.getTracks().length);
-          localStreamRef.current!.getTracks().forEach((track: MediaStreamTrack) => {
-            console.log('Adding track to peer connection:', track.kind, track.label, track.enabled);
-            peer.connection.addTrack(track, localStreamRef.current!);
-          });
+        // Print detailed track information before sending
+        console.log('===== LOCAL STREAM DETAILS BEFORE SENDING TO PEERS =====');
+        localStreamRef.current.getTracks().forEach(track => {
+          console.log(`Track: ${track.kind}, label: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
         });
+        
+        try {
+          // Store current peers info to recreate them
+          const peersToRecreate: {id: string, username: string, streamActive: boolean}[] = [];
+          
+          // First, collect peers information and close connections
+          peers.forEach(peer => {
+            peersToRecreate.push({
+              id: peer.id,
+              username: peer.username,
+              streamActive: peer.streamActive
+            });
+            
+            console.log(`Closing existing connection with ${peer.username}`);
+            peer.connection.close();
+          });
+          
+          // Clear the peer map
+          setPeers(new Map());
+          
+          // Short timeout to ensure state updates
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Now recreate each peer connection with the new stream
+          peersToRecreate.forEach(peer => {
+            console.log(`Recreating connection with ${peer.username}`);
+            createPeerConnection(peer.id, peer.username, peer.streamActive);
+          });
+        } catch (error) {
+          console.error('Error recreating peer connections:', error);
+          showNotification('Error connecting to other participants. Try rejoining the room.', 'error');
+        }
       }
       
       setIsStreaming(true);
@@ -704,12 +853,12 @@ const WebRTC: React.FC = () => {
       
       if (audioTracks.length > 0) {
         audioTracks.forEach(track => {
-          track.enabled = isMuted;
+          track.enabled = isMuted; // Toggle enabled state for remote clients
         });
         setIsMuted(!isMuted);
-        showNotification(`Microphone ${isMuted ? 'unmuted' : 'muted'}`, isMuted ? 'success' : 'warning');
+        showNotification(`Audio for remote clients ${isMuted ? 'enabled' : 'disabled'}`, isMuted ? 'success' : 'warning');
       } else {
-        showNotification('No audio tracks available to mute/unmute', 'error');
+        showNotification('No audio tracks available to control', 'error');
       }
     }
   };
@@ -749,10 +898,19 @@ const WebRTC: React.FC = () => {
       />
       
       <div className="w-full max-w-5xl">
-        <h1 className="text-white text-2xl md:text-3xl font-semibold mb-6 text-center">
-          WebRTC Video Conference
-        </h1>
-        
+        <div className="flex justify-start items-center flex-row mb-6">
+          <div className="flex justify-center items-center">
+            <h1 className="absolute inset-x-0 text-white text-2xl md:text-3xl font-semibold text-center">
+              WebRTC Video Conference
+            </h1>
+            <Link 
+              to="/" 
+              className="pr-6 py-2 text-white rounded transition-colors z-1"
+            >
+              <ArrowLeftIcon className="w-8 h-8" />
+            </Link>
+          </div>
+        </div>
         {!isInRoom ? (
           <div className="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
             <h2 className="text-white text-xl mb-4">Join a Room</h2>
@@ -818,9 +976,9 @@ const WebRTC: React.FC = () => {
                 <h2 className="text-white text-xl">Room: {roomId}</h2>
                 <button
                   onClick={leaveRoom}
-                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                  className="px-4 py-2 bg-red-800 text-white rounded hover:bg-red-900 transition-colors cursor-pointer"
                 >
-                  Leave Room
+                  Leave
                 </button>
               </div>
               
@@ -871,7 +1029,7 @@ const WebRTC: React.FC = () => {
                 </div>
               )}
               
-              <div className="mb-4">
+              <div className="mb-4 flex flex-col items-center">
                 <h3 className="text-white text-lg mb-2">Stream Settings</h3>
                 <div className="flex flex-wrap gap-4">
                   <div className="flex items-center space-x-2">
@@ -925,7 +1083,7 @@ const WebRTC: React.FC = () => {
                 )}
               </div>
               
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-3 justify-center">
                 {!isStreaming ? (
                   <button 
                     onClick={startLocalStream}
@@ -939,15 +1097,6 @@ const WebRTC: React.FC = () => {
                     className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
                   >
                     Stop Streaming
-                  </button>
-                )}
-                
-                {isStreaming && (
-                  <button 
-                    onClick={toggleMicrophone}
-                    className={`px-4 py-2 ${isMuted ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition-colors`}
-                  >
-                    {isMuted ? 'Unmute Audio' : 'Mute Audio'}
                   </button>
                 )}
               </div>
@@ -973,6 +1122,16 @@ const WebRTC: React.FC = () => {
                         <p className="text-white">Stream off</p>
                       </div>
                     )}
+                    <div className="absolute bottom-2 right-2">
+                    {isStreaming && (
+                      <button 
+                        onClick={toggleMicrophone}
+                        className={`px-2 py-2 text-white transition-colors`}
+                      >
+                        {isMuted ? <SpeakerOffIcon className="w-4 h-4" /> : <SpeakerLoudIcon className="w-4 h-4" />}
+                      </button>
+                    )}
+                    </div>
                   </div>
                 </div>
                 
@@ -1001,15 +1160,6 @@ const WebRTC: React.FC = () => {
             </div>
           </div>
         )}
-        
-        <div className="mt-6 flex justify-center">
-          <Link 
-            to="/" 
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Back to Home
-          </Link>
-        </div>
       </div>
     </div>
   );

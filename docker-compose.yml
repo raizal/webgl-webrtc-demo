@@ -1,10 +1,10 @@
-version: '3.8'
-
 services:
   app:
+    container_name: oddbit-app
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
     ports:
       - "3001:3000"
     environment:

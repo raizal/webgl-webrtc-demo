@@ -11,6 +11,10 @@ async function bootstrap() {
   
   // Serve static files from the public directory
   app.useStaticAssets(join(process.cwd(), 'public'));
+  // Serve the SPA for the video-conference route
+  app.useStaticAssets(join(process.cwd(), 'public'), {
+    prefix: '/video-conference',
+  });
   
   await app.listen(process.env.PORT ?? 3000);
   console.log(`Application is running on: ${await app.getUrl()}`);

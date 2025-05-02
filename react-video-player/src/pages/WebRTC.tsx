@@ -470,7 +470,7 @@ const WebRTC: React.FC = () => {
     }
   };
 
-  // Modify startLocalStream to use the extended video element type
+  // Modify startLocalStream to properly handle audio in local files
   const startLocalStream = async () => {
     try {
       if (streamType === 'camera') {
@@ -543,7 +543,9 @@ const WebRTC: React.FC = () => {
         
         // Set source and play the video
         fileVideoRef.current.src = objectUrl;
-        fileVideoRef.current.muted = true; // Prevent duplicate audio
+        fileVideoRef.current.muted = false; // Changed: Don't mute the source video
+        fileVideoRef.current.volume = 1.0; // Ensure volume is up
+        fileVideoRef.current.controls = false; // No need for controls on hidden element
         
         // Make sure we handle the loadedmetadata event
         await new Promise<void>((resolve) => {
@@ -556,7 +558,34 @@ const WebRTC: React.FC = () => {
           }
         });
         
-        await fileVideoRef.current.play();
+        // Enable audio by requesting user interaction first if needed
+        try {
+          await fileVideoRef.current.play();
+        } catch (err) {
+          console.log('Browser requires user interaction before audio playback', err);
+          showNotification('Click anywhere on the page to enable audio', 'warning');
+          
+          // Add one-time listener for user interaction
+          const enableAudio = async () => {
+            try {
+              await fileVideoRef.current?.play();
+              document.removeEventListener('click', enableAudio);
+              document.removeEventListener('touchstart', enableAudio);
+            } catch (err) {
+              console.error('Still could not play audio after user interaction', err);
+            }
+          };
+          
+          document.addEventListener('click', enableAudio, { once: true });
+          document.addEventListener('touchstart', enableAudio, { once: true });
+        }
+        
+        // Debug logs for audio tracks
+        console.log('File type:', localFile.type);
+        
+        // Explicitly wait a small amount of time for the video to start playing
+        // This helps ensure audio tracks are available
+        await new Promise(resolve => setTimeout(resolve, 300));
         
         // Capture the stream based on browser support
         let stream: MediaStream;
@@ -568,14 +597,25 @@ const WebRTC: React.FC = () => {
           throw new Error('Video capture is not supported in this browser');
         }
         
+        // Log audio tracks for debugging
+        console.log('Stream audio tracks:', stream.getAudioTracks().length);
+        
+        // If no audio tracks found, try setting a higher volume
+        if (stream.getAudioTracks().length === 0) {
+          console.warn('No audio tracks detected in the file stream');
+          showNotification('This file may not have audio or your browser blocked it', 'warning');
+        }
+        
         // Copy to visible video element
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+          localVideoRef.current.muted = true; // Mute the local preview to avoid echo
         }
         
-        // Mute audio based on state
-        stream.getAudioTracks().forEach((track: MediaStreamTrack) => {
-          track.enabled = !isMuted;
+        // Handle audio based on mute state in a way that preserves existing tracks
+        const audioTracks = stream.getAudioTracks();
+        audioTracks.forEach((track: MediaStreamTrack) => {
+          track.enabled = !isMuted; // Set according to mute state
         });
         
         // Store the stream
@@ -585,7 +625,10 @@ const WebRTC: React.FC = () => {
       // Add local stream to all existing peer connections
       if (localStreamRef.current) {
         peers.forEach(peer => {
+          // Log how many tracks we're sending for debugging
+          console.log('Sending tracks to peer:', localStreamRef.current!.getTracks().length);
           localStreamRef.current!.getTracks().forEach((track: MediaStreamTrack) => {
+            console.log('Adding track to peer connection:', track.kind, track.label, track.enabled);
             peer.connection.addTrack(track, localStreamRef.current!);
           });
         });
@@ -654,14 +697,20 @@ const WebRTC: React.FC = () => {
     }
   };
 
-  // Toggle microphone
+  // Also update the toggleMicrophone function to work better with file streams
   const toggleMicrophone = () => {
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks();
-      audioTracks.forEach(track => {
-        track.enabled = isMuted;
-      });
-      setIsMuted(!isMuted);
+      
+      if (audioTracks.length > 0) {
+        audioTracks.forEach(track => {
+          track.enabled = isMuted;
+        });
+        setIsMuted(!isMuted);
+        showNotification(`Microphone ${isMuted ? 'unmuted' : 'muted'}`, isMuted ? 'success' : 'warning');
+      } else {
+        showNotification('No audio tracks available to mute/unmute', 'error');
+      }
     }
   };
 
@@ -839,17 +888,6 @@ const WebRTC: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <input
                       type="radio"
-                      id="video"
-                      checked={streamType === 'video'}
-                      onChange={() => changeStreamType('video')}
-                      className="text-blue-600"
-                    />
-                    <label htmlFor="video" className="text-white">Stream Remote Video</label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="radio"
                       id="file"
                       checked={streamType === 'file'}
                       onChange={() => changeStreamType('file')}
@@ -909,7 +947,7 @@ const WebRTC: React.FC = () => {
                     onClick={toggleMicrophone}
                     className={`px-4 py-2 ${isMuted ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition-colors`}
                   >
-                    {isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+                    {isMuted ? 'Unmute Audio' : 'Mute Audio'}
                   </button>
                 )}
               </div>

@@ -1,65 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { SpeakerOffIcon, SpeakerLoudIcon, ArrowLeftIcon } from '@radix-ui/react-icons';
+import { SpeakerOffIcon, SpeakerLoudIcon } from '@radix-ui/react-icons';
+import {
+  Peer, User, ClientJoinedEvent, RoomClientsEvent,
+  ClientDisconnectedEvent, WebRTCOfferEvent, WebRTCAnswerEvent,
+  WebRTCIceCandidateEvent, StreamStatusChangedEvent
+} from '../types/rtc';
 
 // Extended HTMLVideoElement interface to include captureStream
 interface HTMLVideoElementWithCapture extends HTMLVideoElement {
   captureStream(): MediaStream;
   mozCaptureStream(): MediaStream;
-}
-
-interface Peer {
-  id: string;
-  username: string;
-  connection: RTCPeerConnection;
-  streamActive: boolean;
-  iceCandidateBuffer: RTCIceCandidateInit[]; // Buffer to store ICE candidates
-}
-
-interface User {
-  socketId: string;
-  username: string;
-  streamActive: boolean;
-}
-
-interface ClientJoinedEvent {
-  client: User;
-  roomId: string;
-}
-
-interface RoomClientsEvent {
-  clients: User[];
-  roomId: string;
-}
-
-interface ClientDisconnectedEvent {
-  socketId: string;
-  roomId: string;
-}
-
-interface WebRTCOfferEvent {
-  offer: RTCSessionDescriptionInit;
-  from: string;
-  roomId: string;
-}
-
-interface WebRTCAnswerEvent {
-  answer: RTCSessionDescriptionInit;
-  from: string;
-  roomId: string;
-}
-
-interface WebRTCIceCandidateEvent {
-  candidate: RTCIceCandidateInit;
-  from: string;
-  roomId: string;
-}
-
-interface StreamStatusChangedEvent {
-  socketId: string;
-  streamActive: boolean;
-  roomId: string;
 }
 
 const ICE_SERVERS = {
@@ -70,10 +22,13 @@ const ICE_SERVERS = {
 };
 
 const WebRTC: React.FC = () => {
+  const query = useQuery();
+  const qRoomID = query.get('room');
+  
   const [socket, setSocket] = useState<Socket | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
-  const [roomId, setRoomId] = useState<string>('');
-  const [username, setUsername] = useState<string>('');
+  const [roomId, setRoomId] = useState<string>(qRoomID || '');
+  const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
   const [isInRoom, setIsInRoom] = useState<boolean>(false);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -133,8 +88,6 @@ const WebRTC: React.FC = () => {
           document.body.removeChild(notificationElement);
         }, 300);
       }, 3000);
-      
-      console.log('adding peer connection?', room === roomId && client.socketId !== socket.id);
 
       if (room === roomId && client.socketId !== socket.id) {
         setRoomClients(prev => [...prev, client]);
@@ -424,7 +377,7 @@ const WebRTC: React.FC = () => {
   
   const joinRoom = () => {
     if (!socket) {
-      setErrorMessage('Socket connection not established');
+      setErrorMessage("Can't connect to negotiator");
       return;
     }
     
@@ -899,17 +852,9 @@ const WebRTC: React.FC = () => {
       
       <div className="w-full max-w-5xl">
         <div className="flex justify-start items-center flex-row mb-6">
-          <div className="flex justify-center items-center">
-            <h1 className="absolute inset-x-0 text-white text-2xl md:text-3xl font-semibold text-center">
-              WebRTC Video Conference
-            </h1>
-            <Link 
-              to="/" 
-              className="pr-6 py-2 text-white rounded transition-colors z-1"
-            >
-              <ArrowLeftIcon className="w-8 h-8" />
-            </Link>
-          </div>
+          <h1 className="flex-1 text-white text-2xl md:text-3xl font-semibold text-center">
+            Peer-to-Peer WebRTC Video Conference
+          </h1>
         </div>
         {!isInRoom ? (
           <div className="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
@@ -923,20 +868,6 @@ const WebRTC: React.FC = () => {
             
             <div className="space-y-4">
               <div>
-                <label htmlFor="username" className="block text-white mb-2">Username</label>
-                <input
-                  id="username"
-                  ref={usernameInputRef}
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full p-2 rounded bg-gray-700 text-white"
-                  placeholder="Enter your username"
-                  disabled={isJoining}
-                />
-              </div>
-              
-              <div>
                 <label htmlFor="roomId" className="block text-white mb-2">Room ID</label>
                 <input
                   id="roomId"
@@ -946,6 +877,23 @@ const WebRTC: React.FC = () => {
                   onChange={(e) => setRoomId(e.target.value)}
                   className="w-full p-2 rounded bg-gray-700 text-white"
                   placeholder="Enter a room ID"
+                  disabled={isJoining}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="username" className="block text-white mb-2">Your Name</label>
+                <input
+                  id="username"
+                  ref={usernameInputRef}
+                  type="text"
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    localStorage.setItem('username', e.target.value);
+                  }}
+                  className="w-full p-2 rounded bg-gray-700 text-white"
+                  placeholder="Enter your username"
                   disabled={isJoining}
                 />
               </div>
@@ -1164,5 +1112,11 @@ const WebRTC: React.FC = () => {
     </div>
   );
 };
+
+function useQuery() {
+  const { search } = useLocation();
+
+  return React.useMemo(() => new URLSearchParams(search), [search]);
+}
 
 export default WebRTC; 
